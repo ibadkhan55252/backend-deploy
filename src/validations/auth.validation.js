@@ -16,12 +16,15 @@ export const authSchema = yup.object({
     password: yup.string()
         .required()
         .min(6, "Password must be at least 6 characters")
-        .max(128, "Password must be at most 128 characters")
+        .max(128, "Password must be at most 128 characters"),
+
+    profileImage: yup.string()
+        .required("Profile image is required")
 })
 
 
 export const registerValidation = authSchema.clone();
 
 
-export const loginValidation = authSchema.clone().omit(["name"])
+export const loginValidation = authSchema.clone().omit(["name", "profileImage"])
 

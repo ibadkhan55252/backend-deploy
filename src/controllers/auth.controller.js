@@ -39,12 +39,15 @@ export const getAllUsers = async (req, res) => {
 export const register = async (req, res) => {
 
     const body = req.body;
+    body.profileImage = `/uploads/${req.file?.filename}`;
+
+    console.log(body.profileImage)
 
     try {
-        const validatedData = await registerValidation.validate(body, {
-            abortEarly: false,
-            stripUnknown: true
-        })
+        const validatedData = await registerValidation.validate(
+            body,
+            { abortEarly: false, stripUnknown: true }
+        )
 
         const isExistingUser = await User.findOne({ email: validatedData.email })
 
@@ -60,9 +63,14 @@ export const register = async (req, res) => {
         // generate otp
         const oneTimePassword = generateOtp();
 
-        const user = new User({ ...validatedData, password: hashedPassword, otp: oneTimePassword });
+        const user = new User({ ...validatedData, password: hashedPassword });
         await user.save();
 
+        await OTP.create({
+            userId: user._id,
+            otp: crypto.createHash("sha256").update(oneTimePassword).digest("hex"),
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        })
 
         const accessToken = jwt.sign({
             id: user._id
@@ -223,6 +231,33 @@ export const verifyOtp = async (req, res) => {
 
     try {
 
+        console.log(req.user.id)
+
+        const otpRecord = await OTP.findOne({ userId: req.user.id });
+
+        if (!otpRecord) {
+            return res.status(404).json({
+                success: false,
+                message: "OTP not found"
+            })
+        }
+
+        if (otpRecord.expiresAt < new Date()) {
+            return res.status(400).json({
+                success: false,
+                message: "OTP has expired"
+            })
+        }
+
+        const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
+
+        if (otpRecord.otp !== otpHash) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid OTP"
+            })
+        }
+
         const user = await User.findById(req.user.id);
 
         if (!user) {
@@ -232,16 +267,11 @@ export const verifyOtp = async (req, res) => {
             })
         }
 
-        if (user.otp !== otp.toString()) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid OTP"
-            })
-        }
-
         user.isVerified = true;
 
         await user.save();
+
+        await OTP.deleteOne({ _id: otpRecord._id });
 
         const { password, ...safeUser } = user.toObject();
 
@@ -286,10 +316,12 @@ export const forgotPassword = async (req, res) => {
 
         const cryptoOtp = crypto.createHash("sha256").update(oneTimePassword).digest("hex");
 
+        await OTP.deleteMany({ userId: user._id });
+
         const otp = new OTP({
             userId: user._id,
             otp: cryptoOtp,
-            expiresAt: new Date(Date.now() + 2 * 60 * 1000) // OTP expires in 10 minutes
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000) // OTP expires in 10 minutes
         });
 
         await otp.save();
