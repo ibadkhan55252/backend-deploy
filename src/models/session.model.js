@@ -1,9 +1,10 @@
 import mongoose from 'mongoose';
+import { COLLECTIONS } from '../constants/index.js';
 
 const sessionSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: COLLECTIONS.USERS,
         required: true,
     },
     ip: {
@@ -22,6 +23,6 @@ const sessionSchema = new mongoose.Schema({
     { timestamps: true }
 );
 
-const Session = mongoose.model('Session', sessionSchema);
+const Session = mongoose.model(COLLECTIONS.SESSIONS, sessionSchema);
 
 export default Session;

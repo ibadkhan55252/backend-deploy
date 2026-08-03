@@ -19,7 +19,6 @@ export const authSchema = yup.object({
         .max(128, "Password must be at most 128 characters"),
 
     profileImage: yup.string()
-        .required("Profile image is required")
 })
 
 

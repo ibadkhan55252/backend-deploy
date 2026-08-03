@@ -39,9 +39,6 @@ export const getAllUsers = async (req, res) => {
 export const register = async (req, res) => {
 
     const body = req.body;
-    body.profileImage = `/uploads/${req.file?.filename}`;
-
-    console.log(body.profileImage)
 
     try {
         const validatedData = await registerValidation.validate(
@@ -58,18 +55,16 @@ export const register = async (req, res) => {
             })
         }
 
-        const hashedPassword = await generateHashPassword(validatedData.password);
+        const user = new User(validatedData);
+        await user.save();
 
         // generate otp
         const oneTimePassword = generateOtp();
 
-        const user = new User({ ...validatedData, password: hashedPassword });
-        await user.save();
-
         await OTP.create({
             userId: user._id,
             otp: crypto.createHash("sha256").update(oneTimePassword).digest("hex"),
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000) // OTP expires in 10 minutes
         })
 
         const accessToken = jwt.sign({
@@ -77,16 +72,14 @@ export const register = async (req, res) => {
         },
             process.env.JWT_SECRET, {
             expiresIn: "15m"
-        }
-        )
+        })
 
         const refreshToken = jwt.sign({
             id: user._id
         },
             process.env.JWT_SECRET, {
             expiresIn: "7d"
-        }
-        )
+        })
 
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
@@ -132,7 +125,7 @@ export const login = async (req, res) => {
 
         const validatedData = await loginValidation.validate(body, { abortEarly: false })
 
-        const isRegisteredUser = await User.findOne({ email: body.email })
+        const isRegisteredUser = await User.findOne({ email: validatedData.email })
 
         if (!isRegisteredUser) {
             return res.status(400).json({
@@ -230,8 +223,6 @@ export const verifyOtp = async (req, res) => {
     }
 
     try {
-
-        console.log(req.user.id)
 
         const otpRecord = await OTP.findOne({ userId: req.user.id });
 
@@ -412,8 +403,6 @@ export const resetPassword = async (req, res) => {
     const { token } = req.params;
     const { newPassword } = req.body;
 
-    console.log(token)
-
     if (!token || !newPassword) {
         return res.status(400).json({
             success: false,
@@ -425,9 +414,19 @@ export const resetPassword = async (req, res) => {
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const hashedPassword = await generateHashPassword(newPassword);
+        const user = await User.findById(decoded.userId);
 
-        await User.findByIdAndUpdate(decoded.userId, { password: hashedPassword });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        user.password = newPassword;
+
+        await user.save();
+
 
         return res.status(200).json({
             success: true,

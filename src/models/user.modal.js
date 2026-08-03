@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import { COLLECTIONS } from "../constants/index.js";
+import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
     {
@@ -28,10 +30,25 @@ const userSchema = new mongoose.Schema(
         },
         profileImage: {
             type: String,
-            required: true,
+            required: false,
         },
     },
     { timestamps: true }
 );
 
-export const User = mongoose.model("User", userSchema);
+
+userSchema.pre("save", async function () {
+
+    const user = this;
+    if (!user.isModified("password")) return;
+    try {
+        const hash = await bcrypt.hash(user.password, 10);
+        user.password = hash;
+    } catch (error) {
+        throw error;
+    }
+
+});
+
+
+export const User = mongoose.model(COLLECTIONS.USERS, userSchema);
