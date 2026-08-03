@@ -5,9 +5,9 @@ import { loginValidation, registerValidation } from "../validations/auth.validat
 import cookies from "cookie-parser";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken"
-import { sendEmail } from "../service/email.service.js";
 import { generateOtp } from "../utils/index.js";
 import crypto from "crypto";
+import { sendEmailResend } from "../config/resend.config.js";
 
 export const getMe = (req, res) => {
     return res.status(200).json({
@@ -90,7 +90,7 @@ export const register = async (req, res) => {
 
         const { password, ...safeUser } = user.toObject();
 
-        await sendEmailResend(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`);
+        sendEmailResend(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`).catch(console.error);
 
         return res.status(201).json({
             success: true,
@@ -317,7 +317,7 @@ export const forgotPassword = async (req, res) => {
 
         await otp.save();
 
-        await sendEmail(user.email, "Forgot Password", `Your OTP is: ${oneTimePassword}`);
+        sendEmail(user.email, "Forgot Password", `Your OTP is: ${oneTimePassword}`).catch(console.error);
 
         return res.status(200).json({
             success: true,
@@ -381,7 +381,7 @@ export const verifyForgotPasswordOtp = async (req, res) => {
 
         await OTP.deleteOne({ _id: otpRecord._id });
 
-        await sendEmail(user.email, "reset-password link", `http://localhost:4000/api/auth/reset-password/${resetToken}`)
+        sendEmail(user.email, "reset-password link", `http://localhost:4000/api/auth/reset-password/${resetToken}`).catch(console.error);
 
         return res.status(200).json({
             success: true,
