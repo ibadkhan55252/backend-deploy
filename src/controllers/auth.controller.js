@@ -90,7 +90,12 @@ export const register = async (req, res) => {
 
         const { password, ...safeUser } = user.toObject();
 
-        await sendEmailResend(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`).catch(console.error);
+        try {
+            await sendEmailResend(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`);
+        } catch (err) {
+            console.error("Email send failed:", err);
+            return res.status(500).json({ message: "Failed to send OTP email" });
+        }
 
         return res.status(201).json({
             success: true,
