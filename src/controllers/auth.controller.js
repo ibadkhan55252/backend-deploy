@@ -2,21 +2,12 @@ import { decodeHashPassword } from "../helper/index.js";
 import { User } from "../models/user.modal.js";
 import OTP from "../models/otp.model.js";
 import { loginValidation, registerValidation } from "../validations/auth.validation.js";
-import cookies from "cookie-parser";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken"
 import { generateOtp } from "../utils/index.js";
 import crypto from "crypto";
 import { sendEmail } from "../service/email.service.js"
 import Session from "../models/session.model.js";
 
-
-export const getMe = (req, res) => {
-    return res.status(200).json({
-        success: true,
-        message: "test request"
-    })
-}
 
 export const getAllUsers = async (req, res) => {
 
@@ -262,72 +253,6 @@ export const refreshToken = async (req, res) => {
 
 }
 
-export const verifyOtp = async (req, res) => {
-
-    const { otp } = req.body;
-
-    if (!otp) {
-        return res.status(400).json({ success: false, message: "OTP is required" });
-    }
-
-    try {
-
-        const otpRecord = await OTP.findOne({ userId: req.user.id });
-
-        if (!otpRecord) {
-            return res.status(404).json({
-                success: false,
-                message: "OTP not found"
-            })
-        }
-
-        if (otpRecord.expiresAt < new Date()) {
-            return res.status(400).json({
-                success: false,
-                message: "OTP has expired"
-            })
-        }
-
-        const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-
-        if (otpRecord.otp !== otpHash) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid OTP"
-            })
-        }
-
-        const user = await User.findById(req.user.id);
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found"
-            })
-        }
-
-        user.isVerified = true;
-
-        await user.save();
-
-        await OTP.deleteOne({ _id: otpRecord._id });
-
-        const { password, ...safeUser } = user.toObject();
-
-        return res.status(200).json({
-            success: true,
-            message: "Verify otp request",
-            data: safeUser
-        })
-
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: error.message || "Something went wrong in verify OTP"
-        })
-    }
-}
-
 export const verifyEmail = async (req, res) => {
     const { token } = req.query;
 
@@ -520,6 +445,14 @@ export const resetPassword = async (req, res) => {
 
         await user.save();
 
+        // Revoke all existing sessions so old refresh tokens stop working
+        await Session.updateMany({ userId: user._id, revoked: false }, { revoked: true });
+
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
+        });
 
         return res.status(200).json({
             success: true,

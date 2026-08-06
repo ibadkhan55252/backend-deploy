@@ -1,10 +1,8 @@
 import "dotenv/config"
 import express from "express"
-import { Router } from "express";
 import mainRouter from "./src/routes/main.router.js";
 import { connectDB } from "./src/config/db.js";
 import cookieParser from "cookie-parser";
-import multer from "multer";
 import cors from "cors";
 import helmet from "helmet";
 
@@ -18,14 +16,32 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use("/api", mainRouter)
-app.use(multer().none())
 app.use('/uploads', express.static('uploads'));
 
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ success: false, message: "Route not found" });
+});
 
-connectDB();
+// Centralized error handler
+app.use((err, req, res, next) => {
+    console.error(err.message);
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "Internal server error"
+    });
+});
 
-app.listen(process.env.PORT, () => {
-    console.log("server is running on port", process.env.PORT)
-})
+const start = async () => {
+    try {
+        await connectDB();
+        app.listen(process.env.PORT, () => {
+            console.log("server is running on port", process.env.PORT)
+        });
+    } catch (error) {
+        console.error("Failed to start server:", error.message);
+        process.exit(1);
+    }
+};
 
-
+start();

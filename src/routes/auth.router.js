@@ -22,8 +22,7 @@ authRouter.post("/", upload.single("profileImage"), authLimiter, authController.
 // generate access token
 authRouter.post("/refresh", authLimiter, authController.refreshToken)
 
-// verify otp
-authRouter.post("/verify-otp", authenticate, authController.verifyOtp)
+// verify email
 authRouter.get("/verify-user", authController.verifyEmail)
 
 // forget password
