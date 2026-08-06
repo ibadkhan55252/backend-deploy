@@ -1,4 +1,4 @@
-import { decodeHashPassword, generateHashPassword } from "../helper/index.js";
+import { decodeHashPassword } from "../helper/index.js";
 import { User } from "../models/user.modal.js";
 import OTP from "../models/otp.model.js";
 import { loginValidation, registerValidation } from "../validations/auth.validation.js";
@@ -60,8 +60,9 @@ export const register = async (req, res) => {
         const user = new User(validatedData);
         await user.save();
 
-        const accessToken = jwt.sign({
+        const verifyToken = jwt.sign({
             id: user._id,
+            type: "emailVerify",
         },
             process.env.JWT_SECRET, {
             expiresIn: "15m"
@@ -69,13 +70,12 @@ export const register = async (req, res) => {
 
         const { password, ...safeUser } = user.toObject();
 
-        await sendEmail(user.email, "Welcome to our app", `${process.env.BASE_URL}/api/auth/verify-user?token=${accessToken}`);
+        sendEmail(user.email, "Welcome to our app", `Verify your email: ${process.env.CLIENT_URL}/verify-email?token=${verifyToken}`).catch(console.error);
 
         return res.status(201).json({
             success: true,
             message: "Create user successfully, we have sent u email",
             data: safeUser,
-            accessToken
         })
 
     } catch (error) {
@@ -142,14 +142,15 @@ export const login = async (req, res) => {
             userId: isRegisteredUser._id,
             refreshTokenHash,
             ip: req.ip,
-            userAgent: req.headers['user-agent']
+            userAgent: req.headers['user-agent'],
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         })
 
 
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
             maxAge: 7 * 24 * 60 * 60 * 1000
         })
 
@@ -213,7 +214,7 @@ export const refreshToken = async (req, res) => {
             revoked: false,
         })
 
-        if (!session) {
+        if (!session || session.expiresAt < new Date()) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid refresh token"
@@ -221,10 +222,29 @@ export const refreshToken = async (req, res) => {
         }
 
         const accessToken = jwt.sign(
-            { id: decode.id },
+            { id: decode.id, sessionId: session._id },
             process.env.JWT_SECRET,
             { expiresIn: "15m" }
         )
+
+        const newRefreshToken = jwt.sign(
+            { id: decode.id, sessionId: session._id },
+            process.env.JWT_SECRET,
+            { expiresIn: "7d" }
+        )
+
+        const newRefreshTokenHash = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
+
+        session.refreshTokenHash = newRefreshTokenHash;
+        session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await session.save();
+
+        res.cookie("refreshToken", newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        })
 
         return res.status(200).json({
             success: true,
@@ -317,6 +337,10 @@ export const verifyEmail = async (req, res) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        if (decoded.type !== "emailVerify") {
+            return res.status(400).json({ success: false, message: "Invalid verification token" });
+        }
 
         const user = await User.findById(decoded.id);
 
@@ -450,7 +474,7 @@ export const verifyForgotPasswordOtp = async (req, res) => {
 
         await OTP.deleteOne({ _id: otpRecord._id });
 
-        sendEmail(user.email, "reset-password link", `http://localhost:4000/api/auth/reset-password/${resetToken}`).catch(console.error);
+        sendEmail(user.email, "reset-password link", `${process.env.CLIENT_URL}/forgot-password?token=${resetToken}&email=${user.email}`).catch(console.error);
 
         return res.status(200).json({
             success: true,
@@ -544,7 +568,7 @@ export const logout = async (req, res) => {
         res.clearCookie("refreshToken", {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: "strict"
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
         });
 
         return res.status(200).json({

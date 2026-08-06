@@ -23,10 +23,16 @@ const sessionSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    expiresAt: {
+        type: Date,
+        required: true,
+    },
 },
     { timestamps: true }
 );
 
 const Session = mongoose.model(COLLECTIONS.SESSIONS, sessionSchema);
+
+sessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export default Session;
