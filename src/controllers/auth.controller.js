@@ -60,43 +60,8 @@ export const register = async (req, res) => {
         const user = new User(validatedData);
         await user.save();
 
-        // generate otp
-        const oneTimePassword = generateOtp();
-
-        await OTP.create({
-            userId: user._id,
-            otp: crypto.createHash("sha256").update(oneTimePassword).digest("hex"),
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000) // OTP expires in 10 minutes
-        })
-
-
-        const refreshToken = jwt.sign({
-            id: user._id
-        },
-            process.env.JWT_SECRET, {
-            expiresIn: "7d"
-        })
-
-        const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-
-        const session = await Session.create({
-            userId: user._id,
-            refreshTokenHash,
-            ip: req.ip,
-            userAgent: req.headers['user-agent']
-        })
-
-
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
-            maxAge: 7 * 24 * 60 * 60 * 1000
-        })
-
         const accessToken = jwt.sign({
             id: user._id,
-            sessionId: session._id
         },
             process.env.JWT_SECRET, {
             expiresIn: "15m"
@@ -104,8 +69,7 @@ export const register = async (req, res) => {
 
         const { password, ...safeUser } = user.toObject();
 
-        await sendEmail(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`);
-
+        await sendEmail(user.email, "Welcome to our app", `${process.env.BASE_URL}/api/auth/verify-user?token=${accessToken}`);
 
         return res.status(201).json({
             success: true,
@@ -165,13 +129,45 @@ export const login = async (req, res) => {
             })
         }
 
+        const refreshToken = jwt.sign({
+            id: isRegisteredUser._id
+        },
+            process.env.JWT_SECRET, {
+            expiresIn: "7d"
+        })
+
+        const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+        const session = await Session.create({
+            userId: isRegisteredUser._id,
+            refreshTokenHash,
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
+        })
+
+
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        })
+
+        const accessToken = jwt.sign({
+            id: isRegisteredUser._id,
+            sessionId: session._id
+        },
+            process.env.JWT_SECRET, {
+            expiresIn: "15m"
+        })
 
         const { password, ...useData } = isRegisteredUser.toObject();
 
         return res.status(200).json({
             success: true,
             message: "Login user successfully",
-            data: useData
+            data: useData,
+            accessToken,
         });
 
 
@@ -205,27 +201,44 @@ export const refreshToken = async (req, res) => {
             message: "Refresh token not found"
         })
     }
+    try {
 
-    const decode = jwt.verify(refreshToken, process.env.JWT_SECRET);
+        const decode = jwt.verify(refreshToken, process.env.JWT_SECRET);
 
-    if (!decode) {
-        return res.status(401).json({
+
+        const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+        const session = await Session.findOne({
+            refreshTokenHash,
+            revoked: false,
+        })
+
+        if (!session) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token"
+            })
+        }
+
+        const accessToken = jwt.sign(
+            { id: decode.id },
+            process.env.JWT_SECRET,
+            { expiresIn: "15m" }
+        )
+
+        return res.status(200).json({
+            success: true,
+            message: "new access token generated",
+            accessToken
+        })
+
+    } catch (error) {
+        console.error("refreshToken error:", error);
+        return res.status(500).json({
             success: false,
-            message: "Invalid refresh token"
+            message: error.message || "Something went wrong in refresh token"
         })
     }
-
-    const accessToken = jwt.sign(
-        { id: decode.id },
-        process.env.JWT_SECRET,
-        { expiresIn: "15m" }
-    )
-
-    return res.status(200).json({
-        success: true,
-        message: "Post token request",
-        accessToken
-    })
 
 }
 
@@ -295,6 +308,47 @@ export const verifyOtp = async (req, res) => {
     }
 }
 
+export const verifyEmail = async (req, res) => {
+    const { token } = req.query;
+
+    if (!token) {
+        return res.status(400).json({ success: false, message: "Token is required" });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        const user = await User.findById(decoded.id);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        if (user.isVerified) {
+            return res.status(200).json({ success: true, message: "Email already verified" });
+        }
+
+        user.isVerified = true;
+        await user.save();
+
+        return res.status(200).json({ success: true, message: "Email verified successfully" });
+
+    } catch (error) {
+        console.error("verifyEmail error:", error);
+
+        if (error instanceof jwt.TokenExpiredError) {
+            return res.status(400).json({ success: false, message: "Token has expired" });
+        }
+        if (error instanceof jwt.JsonWebTokenError) {
+            return res.status(400).json({ success: false, message: "Invalid token" });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Something went wrong in verify email"
+        });
+    }
+};
 
 export const forgotPassword = async (req, res) => {
 
@@ -452,6 +506,57 @@ export const resetPassword = async (req, res) => {
         return res.status(400).json({
             success: false,
             message: error.message || "Invalid or expired reset token"
+        });
+    }
+
+}
+
+// logout
+
+export const logout = async (req, res) => {
+
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+        return res.status(400).json({
+            success: false,
+            message: "Refresh token is required"
+        })
+    }
+
+    try {
+
+        const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+        const session = await Session.findOne({ refreshTokenHash, revoked: false });
+
+        if (!session) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid refresh token"
+            })
+        }
+
+        session.revoked = true;
+        await session.save();
+
+
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict"
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Logged out successfully"
+        });
+
+    } catch (error) {
+        console.error("logout error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Something went wrong in logout"
         });
     }
 
