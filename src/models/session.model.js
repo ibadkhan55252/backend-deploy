@@ -7,6 +7,10 @@ const sessionSchema = new mongoose.Schema({
         ref: COLLECTIONS.USERS,
         required: true,
     },
+    refreshTokenHash: {
+        type: String,
+        required: true,
+    },
     ip: {
         type: String,
         required: true,

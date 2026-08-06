@@ -7,7 +7,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken"
 import { generateOtp } from "../utils/index.js";
 import crypto from "crypto";
-import { sendEmailResend } from "../config/resend.config.js";
+import { sendEmail } from "../service/email.service.js"
+import Session from "../models/session.model.js";
+
 
 export const getMe = (req, res) => {
     return res.status(200).json({
@@ -67,12 +69,6 @@ export const register = async (req, res) => {
             expiresAt: new Date(Date.now() + 10 * 60 * 1000) // OTP expires in 10 minutes
         })
 
-        const accessToken = jwt.sign({
-            id: user._id
-        },
-            process.env.JWT_SECRET, {
-            expiresIn: "15m"
-        })
 
         const refreshToken = jwt.sign({
             id: user._id
@@ -81,6 +77,16 @@ export const register = async (req, res) => {
             expiresIn: "7d"
         })
 
+        const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+        const session = await Session.create({
+            userId: user._id,
+            refreshTokenHash,
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
+        })
+
+
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
@@ -88,14 +94,18 @@ export const register = async (req, res) => {
             maxAge: 7 * 24 * 60 * 60 * 1000
         })
 
+        const accessToken = jwt.sign({
+            id: user._id,
+            sessionId: session._id
+        },
+            process.env.JWT_SECRET, {
+            expiresIn: "15m"
+        })
+
         const { password, ...safeUser } = user.toObject();
 
-        try {
-            await sendEmailResend(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`);
-        } catch (err) {
-            console.error("Email send failed:", err);
-            return res.status(500).json({ message: "Failed to send OTP email" });
-        }
+        await sendEmail(user.email, "Welcome to our app", `Your OTP is: ${oneTimePassword}`);
+
 
         return res.status(201).json({
             success: true,
